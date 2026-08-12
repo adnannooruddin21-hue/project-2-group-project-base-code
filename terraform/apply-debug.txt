@@ -1,0 +1,134 @@
+data.aws_vpc.default: Reading...
+data.aws_ami.al2023: Reading...
+aws_iam_role.ec2_role: Refreshing state... [id=p2-order-inventory-ec2-role]
+data.aws_ami.al2023: Read complete after 1s [id=ami-04ca947d4c371ef5a]
+data.aws_vpc.default: Read complete after 1s [id=vpc-0fa2c8e2aa1e70611]
+data.aws_subnets.default: Reading...
+aws_security_group.app: Refreshing state... [id=sg-0867c7af10e21adee]
+data.aws_subnets.default: Read complete after 0s [id=eu-north-1]
+aws_iam_role_policy_attachment.cloudwatch_agent: Refreshing state... [id=p2-order-inventory-ec2-role-20260812135149537200000002]
+aws_iam_instance_profile.ec2_profile: Refreshing state... [id=p2-order-inventory-ec2-profile]
+aws_iam_role_policy_attachment.ssm_core: Refreshing state... [id=p2-order-inventory-ec2-role-20260812135149336000000001]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # aws_instance.app will be created
+  + resource "aws_instance" "app" {
+      + ami                                  = "ami-04ca947d4c371ef5a"
+      + arn                                  = (known after apply)
+      + associate_public_ip_address          = (known after apply)
+      + availability_zone                    = (known after apply)
+      + cpu_core_count                       = (known after apply)
+      + cpu_threads_per_core                 = (known after apply)
+      + disable_api_stop                     = (known after apply)
+      + disable_api_termination              = (known after apply)
+      + ebs_optimized                        = (known after apply)
+      + enable_primary_ipv6                  = (known after apply)
+      + get_password_data                    = false
+      + host_id                              = (known after apply)
+      + host_resource_group_arn              = (known after apply)
+      + iam_instance_profile                 = "p2-order-inventory-ec2-profile"
+      + id                                   = (known after apply)
+      + instance_initiated_shutdown_behavior = (known after apply)
+      + instance_lifecycle                   = (known after apply)
+      + instance_state                       = (known after apply)
+      + instance_type                        = "t3.micro"
+      + ipv6_address_count                   = (known after apply)
+      + ipv6_addresses                       = (known after apply)
+      + key_name                             = (known after apply)
+      + monitoring                           = (known after apply)
+      + outpost_arn                          = (known after apply)
+      + password_data                        = (known after apply)
+      + placement_group                      = (known after apply)
+      + placement_partition_number           = (known after apply)
+      + primary_network_interface_id         = (known after apply)
+      + private_dns                          = (known after apply)
+      + private_ip                           = (known after apply)
+      + public_dns                           = (known after apply)
+      + public_ip                            = (known after apply)
+      + secondary_private_ips                = (known after apply)
+      + security_groups                      = (known after apply)
+      + source_dest_check                    = true
+      + spot_instance_request_id             = (known after apply)
+      + subnet_id                            = "subnet-07c2e1c6851078dd3"
+      + tags                                 = {
+          + "Name"    = "p2-order-inventory-ec2"
+          + "Project" = "p2-order-inventory"
+        }
+      + tags_all                             = {
+          + "Name"    = "p2-order-inventory-ec2"
+          + "Project" = "p2-order-inventory"
+        }
+      + tenancy                              = (known after apply)
+      + user_data                            = (known after apply)
+      + user_data_base64                     = (known after apply)
+      + user_data_replace_on_change          = false
+      + vpc_security_group_ids               = [
+          + "sg-0867c7af10e21adee",
+        ]
+
+      + capacity_reservation_specification (known after apply)
+
+      + cpu_options (known after apply)
+
+      + ebs_block_device (known after apply)
+
+      + enclave_options (known after apply)
+
+      + ephemeral_block_device (known after apply)
+
+      + instance_market_options (known after apply)
+
+      + maintenance_options (known after apply)
+
+      + metadata_options (known after apply)
+
+      + network_interface (known after apply)
+
+      + private_dns_name_options (known after apply)
+
+      + root_block_device {
+          + delete_on_termination = true
+          + device_name           = (known after apply)
+          + encrypted             = (known after apply)
+          + iops                  = (known after apply)
+          + kms_key_id            = (known after apply)
+          + tags_all              = (known after apply)
+          + throughput            = (known after apply)
+          + volume_id             = (known after apply)
+          + volume_size           = 10
+          + volume_type           = "gp3"
+        }
+
+      + timeouts {
+          + create = "5m"
+        }
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + instance_id       = (known after apply)
+  + public_ip         = (known after apply)
+
+Do you want to perform these actions?
+  Terraform will perform the actions described above.
+  Only 'yes' will be accepted to approve.
+
+  Enter a value: 
+aws_instance.app: Creating...
+aws_instance.app: Still creating... [00m10s elapsed]
+aws_instance.app: Creation complete after 15s [id=i-0a73e6a486c1efbeb]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+iam_role_name = "p2-order-inventory-ec2-role"
+instance_id = "i-0a73e6a486c1efbeb"
+public_ip = "13.60.31.126"
+security_group_id = "sg-0867c7af10e21adee"

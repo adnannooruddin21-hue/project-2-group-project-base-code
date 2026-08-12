@@ -1,0 +1,65 @@
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "root"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/home/ssm-user/.pm2/logs/order-service-out.log",
+            "log_group_name": "/p2-order-inventory/order-service",
+            "log_stream_name": "{instance_id}-stdout",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/home/ssm-user/.pm2/logs/order-service-error.log",
+            "log_group_name": "/p2-order-inventory/order-service",
+            "log_stream_name": "{instance_id}-stderr",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/home/ssm-user/.pm2/logs/inventory-service-out.log",
+            "log_group_name": "/p2-order-inventory/inventory-service",
+            "log_stream_name": "{instance_id}-stdout",
+            "timezone": "UTC"
+          },
+          {
+            "file_path": "/home/ssm-user/.pm2/logs/inventory-service-error.log",
+            "log_group_name": "/p2-order-inventory/inventory-service",
+            "log_stream_name": "{instance_id}-stderr",
+            "timezone": "UTC"
+          }
+        ]
+      }
+    }
+  },
+  "metrics": {
+    "namespace": "P2OrderInventory",
+    "append_dimensions": {
+      "InstanceId": "${aws:InstanceId}"
+    },
+    "metrics_collected": {
+      "statsd": {
+        "service_address": ":8125",
+        "metrics_collection_interval": 10,
+        "metrics_aggregation_interval": 60
+      },
+      "cpu": {
+        "measurement": ["cpu_usage_idle", "cpu_usage_user", "cpu_usage_system"],
+        "metrics_collection_interval": 60,
+        "totalcpu": true
+      },
+      "mem": {
+        "measurement": ["mem_used_percent"],
+        "metrics_collection_interval": 60
+      },
+      "disk": {
+        "measurement": ["used_percent"],
+        "metrics_collection_interval": 60,
+        "resources": ["/"]
+      }
+    }
+  }
+}
