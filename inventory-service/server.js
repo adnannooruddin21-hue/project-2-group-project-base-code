@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
+const { log } = require('./logger');
 
 const app = express();
 app.use(express.json());
@@ -20,19 +21,6 @@ const inventory = {
 // -----------------------------------------------------------------------
 // TODO (Instrumentation - your project work, not provided here):
 //
-// 1. Correlation ID middleware
-//    - Read the `X-Correlation-Id` header sent by order-service.
-//    - Attach it to `req.correlationId` (or similar) so every log line
-//      below can include it.
-//    - If it's missing, generate one anyway so this service is still
-//      traceable when called directly (e.g. crypto.randomUUID()).
-//
-// 2. Structured JSON logging
-//    - Replace every `console.log(...)` below with a structured JSON log
-//      line: { level, message, correlationId, sku, timestamp, ... }
-//    - Use INFO for normal operations, WARN for handled edge cases
-//      (e.g. insufficient stock), ERROR for unexpected failures.
-//
 // 3. Custom metrics (publish to CloudWatch)
 //    - Suggested metrics for this service: reservation attempts/min,
 //      reservation failures (out of stock) /min, current stock level
@@ -44,6 +32,23 @@ app.use((req, res, next) => {
   next();
 });
 
+// Access log: one line per request, level derived from status code.
+app.use((req, res, next) => {
+  const startedAt = process.hrtime.bigint();
+  res.on('finish', () => {
+    const latencyMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    const level = res.statusCode >= 500 ? 'ERROR' : res.statusCode >= 400 ? 'WARN' : 'INFO';
+    log(level, 'request_completed', {
+      correlationId: req.correlationId,
+      method: req.method,
+      endpoint: req.path,
+      statusCode: res.statusCode,
+      latencyMs: Math.round(latencyMs * 100) / 100,
+    });
+  });
+  next();
+});
+
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', service: 'inventory-service' });
 });
@@ -51,12 +56,19 @@ app.get('/health', (req, res) => {
 app.get('/inventory/:sku', (req, res) => {
   const item = inventory[req.params.sku];
 
-  // TODO: replace with structured log
-  console.log(`GET /inventory/${req.params.sku}`);
-
   if (!item) {
+    log('WARN', 'inventory_lookup_not_found', {
+      correlationId: req.correlationId,
+      sku: req.params.sku,
+    });
     return res.status(404).json({ error: 'SKU not found', sku: req.params.sku });
   }
+
+  log('INFO', 'inventory_lookup', {
+    correlationId: req.correlationId,
+    sku: item.sku,
+    stock: item.stock,
+  });
 
   return res.status(200).json(item);
 });
@@ -65,22 +77,30 @@ app.post('/inventory/reserve', (req, res) => {
   const { sku, quantity } = req.body || {};
 
   if (!sku || typeof quantity !== 'number' || quantity <= 0) {
-    // TODO: replace with structured log (level: WARN)
-    console.log('Invalid reservation request', req.body);
+    log('WARN', 'reservation_validation_failed', {
+      correlationId: req.correlationId,
+      body: req.body,
+    });
     return res.status(400).json({ error: 'sku and a positive numeric quantity are required' });
   }
 
   const item = inventory[sku];
 
   if (!item) {
-    // TODO: replace with structured log (level: WARN)
-    console.log(`Reservation failed - unknown SKU: ${sku}`);
+    log('WARN', 'reservation_failed_unknown_sku', {
+      correlationId: req.correlationId,
+      sku,
+    });
     return res.status(404).json({ error: 'SKU not found', sku });
   }
 
   if (item.stock < quantity) {
-    // TODO: replace with structured log (level: WARN)
-    console.log(`Reservation failed - insufficient stock for ${sku} (have ${item.stock}, want ${quantity})`);
+    log('WARN', 'reservation_failed_insufficient_stock', {
+      correlationId: req.correlationId,
+      sku,
+      available: item.stock,
+      requested: quantity,
+    });
     return res.status(409).json({
       error: 'insufficient stock',
       sku,
@@ -91,8 +111,12 @@ app.post('/inventory/reserve', (req, res) => {
 
   item.stock -= quantity;
 
-  // TODO: replace with structured log (level: INFO)
-  console.log(`Reserved ${quantity} of ${sku}, remaining stock: ${item.stock}`);
+  log('INFO', 'reservation_succeeded', {
+    correlationId: req.correlationId,
+    sku,
+    quantity,
+    remainingStock: item.stock,
+  });
 
   return res.status(200).json({
     sku,

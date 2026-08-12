@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
+const { log } = require('./logger');
 
 const app = express();
 app.use(express.json());
@@ -18,21 +19,6 @@ let nextOrderId = 1;
 // -----------------------------------------------------------------------
 // TODO (Instrumentation - your project work, not provided here):
 //
-// 1. Correlation ID middleware
-//    - This is the START of the request chain, so THIS service generates
-//      the correlation ID if the caller didn't already supply one via
-//      `X-Correlation-Id`.
-//    - Attach it to `req.correlationId`.
-//    - Forward it as an `X-Correlation-Id` header on the axios call to
-//      inventory-service below (see the TODO in the /orders handler).
-//
-// 2. Structured JSON logging
-//    - Replace every `console.log(...)` below with a structured JSON log
-//      line: { level, message, correlationId, orderId, timestamp, ... }
-//    - Use INFO for normal operations, WARN for handled edge cases
-//      (e.g. inventory rejected the reservation), ERROR for unexpected
-//      failures (e.g. inventory-service unreachable).
-//
 // 3. Custom metrics (publish to CloudWatch)
 //    - Suggested metrics for this service: orders created/min, order
 //      value ($), order failure rate, end-to-end order latency
@@ -44,6 +30,25 @@ app.use((req, res, next) => {
   next();
 });
 
+// Access log: one line per request, level derived from status code.
+// This is the line CloudWatch Logs Insights queries for request rate,
+// error rate, and latency (the Golden Signals) will read.
+app.use((req, res, next) => {
+  const startedAt = process.hrtime.bigint();
+  res.on('finish', () => {
+    const latencyMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    const level = res.statusCode >= 500 ? 'ERROR' : res.statusCode >= 400 ? 'WARN' : 'INFO';
+    log(level, 'request_completed', {
+      correlationId: req.correlationId,
+      method: req.method,
+      endpoint: req.path,
+      statusCode: res.statusCode,
+      latencyMs: Math.round(latencyMs * 100) / 100,
+    });
+  });
+  next();
+});
+
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', service: 'order-service' });
 });
@@ -52,8 +57,10 @@ app.post('/orders', async (req, res) => {
   const { sku, quantity, customerId } = req.body || {};
 
   if (!sku || typeof quantity !== 'number' || quantity <= 0 || !customerId) {
-    // TODO: replace with structured log (level: WARN)
-    console.log('Invalid order request', req.body);
+    log('WARN', 'order_validation_failed', {
+      correlationId: req.correlationId,
+      body: req.body,
+    });
     return res.status(400).json({ error: 'sku, quantity (positive number), and customerId are required' });
   }
 
@@ -76,16 +83,28 @@ app.post('/orders', async (req, res) => {
     };
     orders[order.id] = order;
 
-    // TODO: replace with structured log (level: INFO)
-    console.log(`Order ${order.id} confirmed for ${customerId}: ${quantity}x ${sku}`);
+    log('INFO', 'order_created', {
+      correlationId: req.correlationId,
+      orderId: order.id,
+      customerId,
+      sku,
+      quantity,
+      remainingStock: order.remainingStock,
+    });
 
     return res.status(201).json(order);
   } catch (err) {
     if (err.response) {
       // Inventory service responded, but rejected the reservation
       // (e.g. 409 insufficient stock, 404 unknown SKU)
-      // TODO: replace with structured log (level: WARN)
-      console.log(`Order rejected for ${customerId}: ${err.response.data?.error}`);
+      log('WARN', 'order_rejected', {
+        correlationId: req.correlationId,
+        customerId,
+        sku,
+        quantity,
+        reason: err.response.data?.error,
+        inventoryStatus: err.response.status,
+      });
       return res.status(err.response.status).json({
         error: 'order could not be fulfilled',
         reason: err.response.data?.error,
@@ -93,8 +112,12 @@ app.post('/orders', async (req, res) => {
     }
 
     // Inventory service unreachable / timed out / unexpected error
-    // TODO: replace with structured log (level: ERROR)
-    console.log('Failed to reach inventory-service', err.message);
+    log('ERROR', 'inventory_service_unreachable', {
+      correlationId: req.correlationId,
+      customerId,
+      sku,
+      errorMessage: err.message,
+    });
     return res.status(502).json({ error: 'inventory service unavailable' });
   }
 });
@@ -102,12 +125,18 @@ app.post('/orders', async (req, res) => {
 app.get('/orders/:id', (req, res) => {
   const order = orders[req.params.id];
 
-  // TODO: replace with structured log
-  console.log(`GET /orders/${req.params.id}`);
-
   if (!order) {
+    log('WARN', 'order_not_found', {
+      correlationId: req.correlationId,
+      orderId: req.params.id,
+    });
     return res.status(404).json({ error: 'order not found', id: req.params.id });
   }
+
+  log('INFO', 'order_retrieved', {
+    correlationId: req.correlationId,
+    orderId: order.id,
+  });
 
   return res.status(200).json(order);
 });
