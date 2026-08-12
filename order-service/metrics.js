@@ -1,6 +1,6 @@
 const dgram = require('dgram');
 
-const STATSD_HOST = process.env.STATSD_HOST || 'localhost';
+const STATSD_HOST = process.env.STATSD_HOST || '127.0.0.1';
 const STATSD_PORT = process.env.STATSD_PORT || 8125;
 const socket = dgram.createSocket('udp4');
 
