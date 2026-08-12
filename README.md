@@ -44,7 +44,7 @@ Both services use an **in-memory data store** (a plain JS object) — no databas
 ```
 ce-project-2-starter-code/
 ├── README.md                  (this file)
-├── docker-compose.yml         (run both services locally in one command)
+├── ecosystem.config.js        (pm2 process definitions - run both services with one command)
 ├── order-service/
 │   ├── server.js
 │   ├── package.json
@@ -109,13 +109,32 @@ curl -X POST http://localhost:3000/orders \
   -d '{"sku": "SKU-001", "quantity": 2, "customerId": "cust-1"}'
 ```
 
-### Option B — Run both with Docker Compose
+### Option B — Run both with pm2 (recommended once you deploy to a server)
+
+pm2 is a process manager for Node.js — it starts your app, restarts it if it crashes, and keeps it running in the background (so it survives you closing your SSH session). This is what you'll actually use on EC2.
 
 ```bash
-docker compose up --build
+npm install -g pm2
+
+# one-time setup, same as Option A
+cd inventory-service && cp .env.example .env && npm install && cd ..
+cd order-service && cp .env.example .env && npm install && cd ..
+
+# start both services
+pm2 start ecosystem.config.js
+
+pm2 status                 # confirm both show "online"
+pm2 logs                   # tail both services' logs live (Ctrl+C to stop watching)
+pm2 restart order-service  # restart just one
+pm2 stop all                # stop both
 ```
 
-This starts both services on the same ports (3000 and 3001) and wires the `INVENTORY_SERVICE_URL` env var automatically so they can talk to each other.
+To have both services come back automatically if the EC2 instance reboots:
+
+```bash
+pm2 save
+pm2 startup   # then copy/paste and run the command it prints (needs sudo)
+```
 
 ### Generating traffic (for verifying your metrics/dashboard on Day 1)
 
@@ -130,11 +149,17 @@ This sends a mix of valid orders, invalid SKUs, and out-of-stock requests agains
 
 ## Deploying to AWS
 
-This starter code is a plain Node.js/Express app — deploy it the same way you'd deploy any Node app to **EC2** or **ECS**, per the main project spec. A few notes:
+This starter code is a plain Node.js/Express app, run with pm2 — deploy it to an **EC2** instance per the main project spec:
 
-- Each service needs its own deployment target (two EC2 instances, or two ECS services/tasks). They are two independently deployable services by design.
-- Set `INVENTORY_SERVICE_URL` on the order-service deployment to point at wherever inventory-service ends up running (its EC2 private IP/DNS, ECS service discovery name, or a load balancer in front of it).
-- Both services expose `GET /health` — use it for your load balancer / target group health checks if you set one up.
+1. Launch an EC2 instance (Amazon Linux), install Node.js 18+ and `npm install -g pm2`.
+2. Clone this repo onto the instance (or `scp` it over).
+3. Follow the same setup as Option B above (`npm install` in each service dir, `pm2 start ecosystem.config.js`, `pm2 save && pm2 startup`).
+4. Open the security group for ports 3000 and 3001 (or whatever ports you configure) so you can reach the services.
+
+A few notes:
+
+- Each service needs its own deployment target — either two separate EC2 instances, or both running on the same instance under different ports (fine for this project; just update `INVENTORY_SERVICE_URL` accordingly if you split them across two instances, using the private IP of the inventory-service instance).
+- Both services expose `GET /health` — use it for a load balancer / target group health check if you set one up.
 - Nothing in this repo talks to CloudWatch yet. That's the instrumentation work you'll add per the CloudWatch Agent / SDK setup described in the main project docs.
 
 ---
