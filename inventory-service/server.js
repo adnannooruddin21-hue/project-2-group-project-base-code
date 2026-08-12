@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const crypto = require('crypto');
 
 const app = express();
 app.use(express.json());
@@ -38,7 +39,8 @@ const inventory = {
 //      per SKU, reservation latency.
 // -----------------------------------------------------------------------
 app.use((req, res, next) => {
-  // TODO: correlation ID middleware goes here
+  req.correlationId = req.headers['x-correlation-id'] || crypto.randomUUID();
+  res.setHeader('X-Correlation-Id', req.correlationId);
   next();
 });
 

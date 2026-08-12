@@ -39,7 +39,8 @@ let nextOrderId = 1;
 //      (including the call to inventory-service).
 // -----------------------------------------------------------------------
 app.use((req, res, next) => {
-  // TODO: correlation ID middleware goes here
+  req.correlationId = req.headers['x-correlation-id'] || crypto.randomUUID();
+  res.setHeader('X-Correlation-Id', req.correlationId);
   next();
 });
 
@@ -57,11 +58,11 @@ app.post('/orders', async (req, res) => {
   }
 
   try {
-    // TODO: forward the correlation ID here, e.g.
-    //   headers: { 'X-Correlation-Id': req.correlationId }
     const reservation = await axios.post(`${INVENTORY_SERVICE_URL}/inventory/reserve`, {
       sku,
       quantity,
+    }, {
+      headers: { 'X-Correlation-Id': req.correlationId },
     });
 
     const order = {
