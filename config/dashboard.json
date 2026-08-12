@@ -1,0 +1,134 @@
+{
+  "widgets": [
+    {
+      "type": "text",
+      "x": 0,
+      "y": 0,
+      "width": 24,
+      "height": 2,
+      "properties": {
+        "markdown": "# Order & Inventory Service — Golden Signals\nInstance: `i-0a73e6a486c1efbeb` | Namespace: `P2OrderInventory` | Region: `eu-north-1`\n\nTop row = Golden Signals (Traffic, Errors, Latency, Saturation). Bottom row = business detail (revenue, stock)."
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 2,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "title": "Traffic — orders & reservations / min",
+        "view": "timeSeries",
+        "region": "eu-north-1",
+        "period": 60,
+        "stacked": false,
+        "yAxis": { "left": { "min": 0 } },
+        "metrics": [
+          [ { "expression": "SUM(SEARCH('Namespace=\"P2OrderInventory\" MetricName=\"orders_created\"', 'Sum', 60))", "label": "Orders Created (all SKUs)", "id": "e1" } ],
+          [ { "expression": "SEARCH('Namespace=\"P2OrderInventory\" MetricName=\"reservation_attempts\"', 'Sum', 60)", "label": "Reservation Attempts", "id": "e2" } ]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 6,
+      "y": 2,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "title": "Errors — by reason",
+        "view": "timeSeries",
+        "region": "eu-north-1",
+        "period": 60,
+        "stacked": false,
+        "yAxis": { "left": { "min": 0 } },
+        "metrics": [
+          [ { "expression": "SEARCH('Namespace=\"P2OrderInventory\" MetricName=\"order_errors\"', 'Sum', 60)", "label": "order_errors", "id": "e3" } ],
+          [ { "expression": "SEARCH('Namespace=\"P2OrderInventory\" MetricName=\"reservation_failures\"', 'Sum', 60)", "label": "reservation_failures", "id": "e4" } ]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 2,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "title": "Latency — order & reservation (ms)",
+        "view": "timeSeries",
+        "region": "eu-north-1",
+        "period": 60,
+        "stacked": false,
+        "yAxis": { "left": { "min": 0 } },
+        "metrics": [
+          [ { "expression": "SEARCH('Namespace=\"P2OrderInventory\" MetricName=\"order_latency\"', 'Average', 60)", "label": "order_latency avg", "id": "e5" } ],
+          [ { "expression": "SEARCH('Namespace=\"P2OrderInventory\" MetricName=\"order_latency\"', 'p95', 60)", "label": "order_latency p95", "id": "e6" } ],
+          [ { "expression": "SEARCH('Namespace=\"P2OrderInventory\" MetricName=\"reservation_latency\"', 'Average', 60)", "label": "reservation_latency avg", "id": "e7" } ],
+          [ { "expression": "SEARCH('Namespace=\"P2OrderInventory\" MetricName=\"reservation_latency\"', 'p95', 60)", "label": "reservation_latency p95", "id": "e8" } ]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 18,
+      "y": 2,
+      "width": 6,
+      "height": 6,
+      "properties": {
+        "title": "Saturation — CPU / Memory / Disk %",
+        "view": "timeSeries",
+        "region": "eu-north-1",
+        "period": 60,
+        "stacked": false,
+        "yAxis": { "left": { "min": 0, "max": 100 } },
+        "metrics": [
+          [ "P2OrderInventory", "cpu_usage_user", "InstanceId", "i-0a73e6a486c1efbeb", "cpu", "cpu-total", { "label": "CPU user %" } ],
+          [ "P2OrderInventory", "cpu_usage_system", "InstanceId", "i-0a73e6a486c1efbeb", "cpu", "cpu-total", { "label": "CPU system %" } ],
+          [ "P2OrderInventory", "mem_used_percent", "InstanceId", "i-0a73e6a486c1efbeb", { "label": "Memory used %" } ],
+          [ "P2OrderInventory", "disk_used_percent", "path", "/", "InstanceId", "i-0a73e6a486c1efbeb", "device", "nvme0n1p1", "fstype", "xfs", { "label": "Disk used %" } ]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 8,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Orders & Revenue",
+        "view": "timeSeries",
+        "region": "eu-north-1",
+        "period": 60,
+        "stacked": false,
+        "metrics": [
+          [ { "expression": "SUM(SEARCH('Namespace=\"P2OrderInventory\" MetricName=\"orders_created\"', 'Sum', 60))", "label": "Orders Created", "id": "e9", "yAxis": "left" } ],
+          [ { "expression": "SEARCH('Namespace=\"P2OrderInventory\" MetricName=\"order_value\"', 'Sum', 60)", "label": "Order Value ($)", "id": "e10", "yAxis": "right" } ]
+        ],
+        "yAxis": {
+          "left": { "label": "Orders", "min": 0 },
+          "right": { "label": "USD", "min": 0 }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 8,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Stock Level per SKU",
+        "view": "timeSeries",
+        "region": "eu-north-1",
+        "period": 60,
+        "stacked": false,
+        "yAxis": { "left": { "min": 0 } },
+        "metrics": [
+          [ { "expression": "SEARCH('Namespace=\"P2OrderInventory\" MetricName=\"stock_level\"', 'Average', 60)", "label": "stock_level", "id": "e11" } ]
+        ]
+      }
+    }
+  ]
+}
