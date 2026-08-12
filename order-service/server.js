@@ -3,6 +3,7 @@ const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
 const { log } = require('./logger');
+const metrics = require('./metrics');
 
 const app = express();
 app.use(express.json());
@@ -16,14 +17,6 @@ const INVENTORY_SERVICE_URL = process.env.INVENTORY_SERVICE_URL || 'http://local
 const orders = {};
 let nextOrderId = 1;
 
-// -----------------------------------------------------------------------
-// TODO (Instrumentation - your project work, not provided here):
-//
-// 3. Custom metrics (publish to CloudWatch)
-//    - Suggested metrics for this service: orders created/min, order
-//      value ($), order failure rate, end-to-end order latency
-//      (including the call to inventory-service).
-// -----------------------------------------------------------------------
 app.use((req, res, next) => {
   req.correlationId = req.headers['x-correlation-id'] || crypto.randomUUID();
   res.setHeader('X-Correlation-Id', req.correlationId);
@@ -54,6 +47,7 @@ app.get('/health', (req, res) => {
 });
 
 app.post('/orders', async (req, res) => {
+  const startedAt = process.hrtime.bigint();
   const { sku, quantity, customerId } = req.body || {};
 
   if (!sku || typeof quantity !== 'number' || quantity <= 0 || !customerId) {
@@ -61,6 +55,7 @@ app.post('/orders', async (req, res) => {
       correlationId: req.correlationId,
       body: req.body,
     });
+    metrics.increment('order_errors', 1, { reason: 'validation' });
     return res.status(400).json({ error: 'sku, quantity (positive number), and customerId are required' });
   }
 
@@ -92,6 +87,12 @@ app.post('/orders', async (req, res) => {
       remainingStock: order.remainingStock,
     });
 
+    const orderValue = Math.round((reservation.data.price || 0) * quantity * 100) / 100;
+    const latencyMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    metrics.increment('orders_created', 1, { sku });
+    metrics.increment('order_value', orderValue);
+    metrics.timing('order_latency', Math.round(latencyMs * 100) / 100);
+
     return res.status(201).json(order);
   } catch (err) {
     if (err.response) {
@@ -105,6 +106,7 @@ app.post('/orders', async (req, res) => {
         reason: err.response.data?.error,
         inventoryStatus: err.response.status,
       });
+      metrics.increment('order_errors', 1, { reason: 'rejected' });
       return res.status(err.response.status).json({
         error: 'order could not be fulfilled',
         reason: err.response.data?.error,
@@ -118,6 +120,7 @@ app.post('/orders', async (req, res) => {
       sku,
       errorMessage: err.message,
     });
+    metrics.increment('order_errors', 1, { reason: 'inventory_unreachable' });
     return res.status(502).json({ error: 'inventory service unavailable' });
   }
 });

@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
 const { log } = require('./logger');
+const metrics = require('./metrics');
 
 const app = express();
 app.use(express.json());
@@ -10,22 +11,15 @@ const PORT = process.env.PORT || 3001;
 
 // ---------------------------------------------------------------------------
 // In-memory inventory store. Resets on restart - that's fine for this project.
+// price is USD, used to compute order_value in order-service.
 // ---------------------------------------------------------------------------
 const inventory = {
-  'SKU-001': { sku: 'SKU-001', name: 'Wireless Mouse', stock: 50 },
-  'SKU-002': { sku: 'SKU-002', name: 'Mechanical Keyboard', stock: 20 },
-  'SKU-003': { sku: 'SKU-003', name: 'USB-C Hub', stock: 5 },
-  'SKU-004': { sku: 'SKU-004', name: 'Webcam', stock: 0 }, // intentionally out of stock
+  'SKU-001': { sku: 'SKU-001', name: 'Wireless Mouse', stock: 50, price: 19.99 },
+  'SKU-002': { sku: 'SKU-002', name: 'Mechanical Keyboard', stock: 20, price: 79.99 },
+  'SKU-003': { sku: 'SKU-003', name: 'USB-C Hub', stock: 5, price: 34.99 },
+  'SKU-004': { sku: 'SKU-004', name: 'Webcam', stock: 0, price: 49.99 }, // intentionally out of stock
 };
 
-// -----------------------------------------------------------------------
-// TODO (Instrumentation - your project work, not provided here):
-//
-// 3. Custom metrics (publish to CloudWatch)
-//    - Suggested metrics for this service: reservation attempts/min,
-//      reservation failures (out of stock) /min, current stock level
-//      per SKU, reservation latency.
-// -----------------------------------------------------------------------
 app.use((req, res, next) => {
   req.correlationId = req.headers['x-correlation-id'] || crypto.randomUUID();
   res.setHeader('X-Correlation-Id', req.correlationId);
@@ -74,13 +68,22 @@ app.get('/inventory/:sku', (req, res) => {
 });
 
 app.post('/inventory/reserve', (req, res) => {
+  const startedAt = process.hrtime.bigint();
   const { sku, quantity } = req.body || {};
+  metrics.increment('reservation_attempts');
+
+  const finishTiming = () => {
+    const latencyMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    metrics.timing('reservation_latency', Math.round(latencyMs * 100) / 100);
+  };
 
   if (!sku || typeof quantity !== 'number' || quantity <= 0) {
     log('WARN', 'reservation_validation_failed', {
       correlationId: req.correlationId,
       body: req.body,
     });
+    metrics.increment('reservation_failures', 1, { reason: 'validation' });
+    finishTiming();
     return res.status(400).json({ error: 'sku and a positive numeric quantity are required' });
   }
 
@@ -91,6 +94,8 @@ app.post('/inventory/reserve', (req, res) => {
       correlationId: req.correlationId,
       sku,
     });
+    metrics.increment('reservation_failures', 1, { reason: 'unknown_sku' });
+    finishTiming();
     return res.status(404).json({ error: 'SKU not found', sku });
   }
 
@@ -101,6 +106,8 @@ app.post('/inventory/reserve', (req, res) => {
       available: item.stock,
       requested: quantity,
     });
+    metrics.increment('reservation_failures', 1, { reason: 'insufficient_stock', sku });
+    finishTiming();
     return res.status(409).json({
       error: 'insufficient stock',
       sku,
@@ -117,11 +124,14 @@ app.post('/inventory/reserve', (req, res) => {
     quantity,
     remainingStock: item.stock,
   });
+  metrics.gauge('stock_level', item.stock, { sku });
+  finishTiming();
 
   return res.status(200).json({
     sku,
     reserved: quantity,
     remainingStock: item.stock,
+    price: item.price,
   });
 });
 
