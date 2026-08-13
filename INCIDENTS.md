@@ -50,3 +50,113 @@ None needed — `stress-ng` has a built-in timeout and exited on its own after 2
 ### Evidence
 - [x] Dashboard Saturation widget showing the CPU spike (10:18-10:25 local time / 08:18-08:25 UTC) — clean 0% → 100% → 0% CPU user% spike, memory (~35%) and disk (~23%) unaffected, confirming this was a pure CPU-only event. `evidence/incident-screenshots/incident-1-cpu-saturation.png`
 - [x] Alarm notification email — full AWS SNS notification showing alarm name, description, `OK -> ALARM` state change, exact breaching datapoints (100.0 at 08:21:00 and 08:22:00), threshold, and metric expression (`100 - idle`). `evidence/alert-screenshots/incident-1-cpu-alarm-email.png`
+
+---
+
+## Incident #2 — Downstream Dependency Failure (injected)
+
+**Date/time:** 2026-08-13, ~08:55-09:02 UTC
+
+**Type:** Intentional failure injection (controlled test, not a real production incident)
+
+### Symptoms
+- Every `POST /orders` request returned `502 {"error":"inventory service unavailable"}`.
+- order-service logged `inventory_service_unreachable` at `ERROR` level (not `WARN` — this is the one genuinely-unexpected-failure path in the code, distinct from the `order_rejected`/`WARN` logs seen from ordinary bad-SKU traffic) with `errorMessage: "connect ECONNREFUSED 127.0.0.1:3001"` on every single request.
+- `order-error-rate-warning` and `order-error-rate-critical` alarms both transitioned `OK → ALARM` at 08:55:33 UTC.
+
+### Impact
+100% of order attempts failed for the duration of the outage (~7 minutes). In a real system this would mean the store is completely unable to take orders — more severe than Incident #1, which only degraded CPU headroom.
+
+### Detection
+Automated: both error-rate alarms fired (this scenario produces a 100% error rate, so both the 10% warning and 25% critical thresholds were crossed immediately, unlike Incident #1's CPU alarm which only breached the single CPU threshold).
+
+### Investigation
+1. `pm2 status` on the instance showed `inventory-service` in a `stopped` state — the direct, immediate cause visible from process status alone, no metrics needed.
+2. `aws logs tail` on `/p2-order-inventory/order-service` showed a clean, consistent pattern: every request producing `inventory_service_unreachable` with the identical `ECONNREFUSED 127.0.0.1:3001` error — this is what distinguishes a *dependency outage* from *ordinary bad input*: the error is uniform and infrastructure-level, not varying by SKU/customer/quantity like the validation/rejection errors we see from normal bad-SKU traffic.
+3. Cross-checked the other 4 alarms (CPU, memory, both latency tiers) — all stayed `OK` throughout, confirming this was purely a dependency-availability problem, not a resource-saturation one. This is a useful differential: the *shape* of which alarms fire (error-rate only, vs. CPU/latency) is itself diagnostic information pointing at different root causes.
+
+### Metrics observed
+- `OrderServiceErrorCount` / `OrderServiceRequestCount` (log-derived, namespace `p2-order-inventory/Logs`): error rate at 100% for the duration.
+- CPU, memory, latency: unaffected (stayed at baseline) — order-service fails fast (~2-3ms per request, visible in the `request_completed` logs) rather than hanging, because the failure is an immediate connection refusal, not a timeout.
+
+### Logs observed
+`inventory_service_unreachable` (ERROR) paired with `request_completed` (ERROR, statusCode 502) on every request — sample correlation ID `e316d822-c7dc-41ee-8578-a1124064184f` ties one full failed request together across both log lines.
+
+### Root cause
+Deliberately injected via `pm2 stop inventory-service` on the EC2 instance. Not a real defect — but it does expose one: **order-service has no configured request timeout or circuit breaker** on its call to inventory-service. In this scenario the failure was a fast `ECONNREFUSED` (connection actively refused, since nothing was listening on port 3001), so it happened to fail fast anyway — but if inventory-service had instead hung (e.g. overloaded rather than stopped) rather than refusing the connection outright, order-service would have no bound on how long it waits, and could itself back up and become unresponsive. This is a real, generalizable finding, not specific to how we injected the failure.
+
+### Immediate fix
+`pm2 start inventory-service` — full recovery confirmed by a real successful order (`id: 38`, `201 confirmed`) within ~2 minutes, and both error-rate alarms returned to `OK` shortly after.
+
+### Long-term fix
+- Add an explicit timeout to the `axios.post` call in `order-service/server.js` (currently unbounded) so a hung/slow dependency fails fast instead of potentially cascading.
+- Consider a circuit breaker so repeated failures to inventory-service short-circuit further attempts for a cooldown period, rather than every request paying the full connection-attempt cost.
+- pm2's own auto-restart (`pm2 start` with default restart-on-crash behavior) would have self-healed this if inventory-service had *crashed* rather than being deliberately stopped — worth confirming that behavior is actually enabled, since deliberate `pm2 stop` bypasses it (stop is intentional and pm2 respects that), but a real crash should trigger it automatically.
+
+### Lessons learned
+1. The *pattern* of which alarms fire is itself diagnostic — error-rate-only (this incident) vs. saturation-only (Incident #1) point to different failure classes before you even open a log.
+2. A uniform, SKU-independent error message across every request is the signature of an infrastructure/dependency failure, not an application-logic one — useful triage heuristic.
+3. Fast-failing (2-3ms) turned out to be lucky here because the connection was actively refused; the missing timeout on the inventory-service call is a real gap that a *slow* dependency failure would expose differently than this test did.
+
+### Evidence
+- [x] Dashboard Errors widget showing `order_errors inventory_unreachable` spiking during ~08:52-09:00 UTC (sparser trace than Incident #1 since this test only generated ~30 requests over 30s — event-driven metric vs. CPU's continuous sampling). `evidence/incident-screenshots/incident-2-error-spike.png`
+- [x] Alarm notification email for `order-error-rate-critical` — confirms `OK -> ALARM` at 08:55:33 UTC, 100.0% error rate at 08:53-08:54. `evidence/alert-screenshots/incident-2-error-rate-alarm-email.png`
+
+---
+
+## Incident #3 — Complex/Multi-Factor: CPU Saturation + Traffic Surge (injected)
+
+**Date/time:** 2026-08-13, ~09:17-09:23 UTC (4-minute overlapping window)
+
+**Type:** Intentional failure injection (controlled test, not a real production incident). Designed specifically to close an investigative gap left open by Incident #1.
+
+### Symptoms
+- `cpu-critical` alarm fired (CPU pushed to 100% by `stress-ng --cpu 2` running for the full 240s).
+- `order-error-rate-warning`/`-critical` also fired — expected, this is the same background bad-SKU error rate present in all our traffic tests, not a new finding.
+- `order-latency-warning`/`-critical` stayed `OK` throughout.
+
+### Impact
+None to real users (test only). The genuine output of this scenario is a data-backed answer to a question, not a service disruption.
+
+### Detection
+Automated via `cpu-critical` and both error-rate alarms, same mechanism as Incidents #1 and #2.
+
+### Investigation — closing the Incident #1 gap
+Incident #1 couldn't determine whether CPU saturation affects request latency, because the traffic generator had already stopped before the CPU load peaked. This time, `stress-ng` (run in the background via `nohup`) and a 240-request traffic surge ran **simultaneously** for the same ~4-minute window, specifically to produce overlapping data.
+
+Result — a real, measurable, but sub-threshold effect:
+
+| | Baseline (no load) | During CPU+traffic overlap |
+|---|---|---|
+| `order_latency` avg | ~3.6-4.5ms | ~6.6-11.0ms |
+| `order_latency` p95 | ~4.1-6.2ms | ~11.0-16.6ms |
+| `order_latency` max | ~4.1-6.4ms | up to 16.6ms |
+
+That's roughly a **2-3x increase** in latency directly attributable to CPU contention — a genuine causal link, now proven with real overlapping data rather than left as an open question. But even at 3x baseline, absolute latency (11-16ms) remains **12-18x below** the 200ms warning threshold, which is why the latency alarms correctly stayed `OK`.
+
+### Metrics observed
+- CPU utilization: 100% for the duration (via `100 - cpu_usage_idle` metric math, same as Incident #1).
+- `order_latency` avg/p95/max: all elevated ~2-3x baseline (table above).
+- Error rate: consistent with the same background bad-SKU traffic pattern as every other test — not a new finding from this scenario specifically.
+
+### Logs observed
+No new log patterns beyond what's already documented in Incidents #1 (no app-level logs from CPU pressure itself) and the routine `order_rejected`/`reservation_failed_*` WARN logs from bad-SKU traffic.
+
+### Root cause
+Deliberately injected via simultaneous `stress-ng --cpu 2 --timeout 240s` (background) and `generate-traffic.sh` (240 requests, 1s delay) on the EC2 instance. Not a real defect.
+
+### Immediate fix
+None needed — both the load generator and traffic script are self-terminating. CPU returned to baseline and all 6 alarms recovered to `OK` within a few minutes of `stress-ng` completing.
+
+### Long-term fix / recommendation
+- **The 200ms latency warning threshold has real headroom** — even under genuine CPU saturation, this app never got within an order of magnitude of tripping it. That's reassuring for this workload, but also means the latency alarm alone would not catch CPU saturation early; the CPU alarm remains the correct primary signal for that failure mode, with latency as a secondary corroborating signal rather than the first line of defense.
+- If this app's real-world traffic volume were significantly higher (this test's "surge" was still only 240 requests over 4 minutes), the CPU-to-latency relationship might not stay linear — worth re-testing at higher concurrency if this ever needs to scale.
+
+### Lessons learned
+1. **Test design matters as much as the failure itself** — Incident #1's inconclusive result wasn't a dead end, it was a signal to redesign the test (overlapping load instead of sequential), which is exactly what happened here.
+2. A metric can move in the *statistically expected direction* (CPU up → latency up) without being anywhere near alarm-worthy — correlation and severity are separate questions, and conflating them would lead to either alarm fatigue (too sensitive) or missed problems (too lax). Our threshold passed this real-world check.
+3. Multi-factor scenarios are genuinely harder to reason about than single-factor ones even when, as here, the outcome turns out to be reassuring rather than alarming — the *process* of checking rather than assuming is the actual deliverable.
+
+### Evidence
+- [x] Dashboard Saturation widget showing the CPU spike (100% for ~4 min, ~11:17-11:22 local / ~09:17-09:22 UTC), memory/disk unaffected. `evidence/incident-screenshots/incident-3-cpu-latency-correlation.png`
+- [x] Latency correlation itself documented numerically above (avg/p95/max table) via direct CloudWatch metric data query rather than a visual — the actual increase (~11-16ms) is too small relative to the dashboard's y-axis scale to be visible next to the 100% CPU spike in a combined screenshot, so the table is the more legible evidence here.
