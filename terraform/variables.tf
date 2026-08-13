@@ -33,3 +33,9 @@ variable "iam_user_name" {
   type        = string
   default     = "AdnanTest"
 }
+
+variable "alert_email" {
+  description = "Email address subscribed to the SNS alarm topic"
+  type        = string
+  default     = "adnan.nooruddin21@gmail.com"
+}

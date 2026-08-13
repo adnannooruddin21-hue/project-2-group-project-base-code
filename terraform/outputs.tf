@@ -17,3 +17,8 @@ output "security_group_id" {
   description = "Security group ID"
   value       = aws_security_group.app.id
 }
+
+output "sns_topic_arn" {
+  description = "SNS topic that alarms notify"
+  value       = aws_sns_topic.alerts.arn
+}
