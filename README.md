@@ -1,175 +1,92 @@
-# Project 2 Starter Code — Order Service & Inventory Service
+# Instrumented & Monitored Cloud Service — Order & Inventory
 
-This repo is starter code for the **team (split-by-service) option** of Project 2: Instrumented & Monitored Cloud Service.
+Project 2: a two-service order/inventory API deployed to EC2, instrumented end-to-end with structured logging, correlation IDs, 8 custom CloudWatch metrics, a Golden Signals dashboard, 6 tiered alarms with SNS email alerting, and 3 documented failure-injection incidents. Built on top of the split-service starter code — see [order-service/README.md](order-service/README.md) and [inventory-service/README.md](inventory-service/README.md) for the base application details.
 
-**What this repo gives you:** two working Node.js/Express services with basic business logic already wired up, so you can spend your 3 days on deployment, instrumentation, dashboards, alerting, and incident response — not on writing CRUD routes.
-
-**What this repo does NOT give you** (this is your project work — see the `TODO` comments in each `server.js`):
-
-- Structured JSON logging
-- Custom CloudWatch metrics
-- Correlation ID generation and pass-through
-- CloudWatch Logs Agent config
-- Dashboards, alarms, SNS topics
-- Auto-remediation Lambda
-- Service map widget
-- Cross-service Logs Insights queries
-- Injected failure scenarios
-
-Refer back to the main **Project 2** spec and the **Team Addendum** doc for full requirements — this repo only covers the "app" piece.
-
----
+**Emphasis of this project is observability, not application complexity** — the app itself is deliberately simple (in-memory data, two Express services), and the work is in what surrounds it.
 
 ## Architecture
 
 ```
-   client
-     |
-     v
-+-------------------+        +----------------------+
-|   order-service    | -----> |  inventory-service    |
-|   (port 3000)      |  HTTP  |  (port 3001)          |
-+-------------------+        +----------------------+
+Internet --> :3000 only --> EC2 (order-service + inventory-service via pm2)
+                                    |
+                     CloudWatch Agent (logs, custom metrics via StatsD, CPU/mem/disk)
+                                    |
+                     CloudWatch Logs + Metrics --> Dashboard --> Alarms --> SNS --> Email
 ```
 
-- **order-service** — `POST /orders`, `GET /orders/:id`, `GET /health`. On order creation, calls `inventory-service` to reserve stock before confirming the order.
-- **inventory-service** — `GET /inventory/:sku`, `POST /inventory/reserve`, `GET /health`. Maintains in-memory stock levels.
+Full detail, component table, and design rationale: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
-Both services use an **in-memory data store** (a plain JS object) — no database required. Data resets when the process restarts. This is intentional: you're being graded on observability, not persistence.
+## Documentation index
 
----
+| Doc | Covers |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Components, diagram, log/metric/alert flow, technology choices |
+| [INSTRUMENTATION.md](INSTRUMENTATION.md) | Logging strategy, correlation IDs, all 8 custom metrics with rationale |
+| [MONITORING.md](MONITORING.md) | Dashboard design, widget-by-widget purpose, incident-response usage |
+| [ALERTING.md](ALERTING.md) | All 6 alarms, thresholds with baseline-backed rationale, SNS setup |
+| [INCIDENTS.md](INCIDENTS.md) | 3 investigated failure scenarios with real evidence and root causes |
+| [docs/runbook.md](docs/runbook.md) | Practical troubleshooting commands |
+| [docs/dashboard-guide.md](docs/dashboard-guide.md) | Quick-reference guide to reading the dashboard |
+| [docs/deployment.md](docs/deployment.md) | Full deployment sequence, as actually run |
 
-## Repo Structure
+## Key observability features
 
-```
-ce-project-2-starter-code/
-├── README.md                  (this file)
-├── ecosystem.config.js        (pm2 process definitions - run both services with one command)
-├── order-service/
-│   ├── server.js
-│   ├── package.json
-│   ├── .env.example
-│   └── README.md
-├── inventory-service/
-│   ├── server.js
-│   ├── package.json
-│   ├── .env.example
-│   └── README.md
-└── scripts/
-    └── generate-traffic.sh    (basic load generator for testing/verifying metrics)
-```
+- **Structured JSON logs** shipped to CloudWatch Logs (`/p2-order-inventory/order-service`, `/p2-order-inventory/inventory-service`), with `INFO`/`WARN`/`ERROR` levels and a correlation ID on every line, traced end-to-end across both services.
+- **8 custom metrics** (5 genuinely business-focused: orders created, order value, reservation failures by SKU, stock level, plus error/latency technical metrics) published via a hand-written StatsD sender — no logging or metrics library dependency anywhere in the app.
+- **CPU/memory/disk monitoring** via the CloudWatch Agent (memory and disk aren't available at all without it).
+- **7-widget Golden Signals dashboard** (`P2-Order-Inventory`) — Traffic, Errors, Latency, Saturation across the top, business detail below.
+- **6 tiered CloudWatch alarms** (warning/critical on error rate and latency, critical on CPU, warning on memory), all backed by real observed baselines, wired to SNS email alerts — verified working via 3 real failure-injection tests, not just configured.
+- **Infrastructure as code** — EC2, IAM, security group, SNS, alarms, and log metric filters are all in [`terraform/`](terraform/), reviewable via `terraform plan` before anything is created.
+- **Instance access via SSM Session Manager only** — no SSH key exists, no port 22 is open.
 
----
+## Deploying
 
-## Installation & Local Setup
-
-Requires **Node.js 18+** and **npm**. Check your version first:
+Full step-by-step: **[docs/deployment.md](docs/deployment.md)**.
 
 ```bash
-node -v
-npm -v
+cd terraform && terraform init && terraform plan -out=tfplan && terraform apply tfplan
+aws ssm start-session --target $(terraform output -raw instance_id) --region eu-north-1
+# on the instance: install Node.js/pm2, git clone, npm ci, pm2 start ecosystem.config.js,
+# install + configure the CloudWatch Agent — see docs/deployment.md for exact commands
 ```
 
-### Option A — Run each service manually (recommended, so you understand what's running)
-
-**Terminal 1 — Inventory Service:**
+## Running locally (no AWS required)
 
 ```bash
-cd inventory-service
-cp .env.example .env
-npm install
-npm start
-```
-
-You should see `Inventory service listening on port 3001`.
-
-**Terminal 2 — Order Service:**
-
-```bash
-cd order-service
-cp .env.example .env
-npm install
-npm start
-```
-
-You should see `Order service listening on port 3000`.
-
-**Verify both are healthy:**
-
-```bash
-curl http://localhost:3001/health
+cd inventory-service && cp .env.example .env && npm install && npm start &
+cd order-service && cp .env.example .env && npm install && npm start &
 curl http://localhost:3000/health
+./scripts/generate-traffic.sh http://localhost:3000 20 0.5
+```
+Structured JSON logs print to stdout; custom metrics attempt to send to `127.0.0.1:8125` (silently no-op locally unless a StatsD listener is running there).
+
+## Evidence
+
+Screenshots from the deployed system, captured during actual testing (not staged): [`evidence/dashboard-screenshots/`](evidence/dashboard-screenshots/), [`evidence/alert-screenshots/`](evidence/alert-screenshots/), [`evidence/incident-screenshots/`](evidence/incident-screenshots/). Referenced inline throughout [INCIDENTS.md](INCIDENTS.md).
+
+## Repo structure
+
+```
+.
+├── README.md, ARCHITECTURE.md, INSTRUMENTATION.md,
+│   MONITORING.md, ALERTING.md, INCIDENTS.md
+├── order-service/            # public API (:3000)
+│   ├── server.js, logger.js, metrics.js
+├── inventory-service/        # internal-only API (:3001)
+│   ├── server.js, logger.js, metrics.js
+├── ecosystem.config.js       # pm2 process definitions
+├── terraform/                 # EC2, IAM, security group, SNS, alarms, log metric filters
+├── config/
+│   ├── dashboard.json                    # CloudWatch dashboard definition
+│   └── cloudwatch-agent-config.json      # logs + metrics + StatsD agent config
+├── docs/
+│   ├── runbook.md, dashboard-guide.md, deployment.md
+├── evidence/
+│   ├── dashboard-screenshots/, alert-screenshots/, incident-screenshots/
+└── scripts/
+    └── generate-traffic.sh   # load generator for testing metrics/dashboard/alarms
 ```
 
-**Try placing an order (exercises both services):**
+## What's deliberately not included
 
-```bash
-curl -X POST http://localhost:3000/orders \
-  -H "Content-Type: application/json" \
-  -d '{"sku": "SKU-001", "quantity": 2, "customerId": "cust-1"}'
-```
-
-### Option B — Run both with pm2 (recommended once you deploy to a server)
-
-pm2 is a process manager for Node.js — it starts your app, restarts it if it crashes, and keeps it running in the background (so it survives you closing your SSH session). This is what you'll actually use on EC2.
-
-```bash
-npm install -g pm2
-
-# one-time setup, same as Option A
-cd inventory-service && cp .env.example .env && npm install && cd ..
-cd order-service && cp .env.example .env && npm install && cd ..
-
-# start both services
-pm2 start ecosystem.config.js
-
-pm2 status                 # confirm both show "online"
-pm2 logs                   # tail both services' logs live (Ctrl+C to stop watching)
-pm2 restart order-service  # restart just one
-pm2 stop all                # stop both
-```
-
-To have both services come back automatically if the EC2 instance reboots:
-
-```bash
-pm2 save
-pm2 startup   # then copy/paste and run the command it prints (needs sudo)
-```
-
-### Generating traffic (for verifying your metrics/dashboard on Day 1)
-
-```bash
-chmod +x scripts/generate-traffic.sh
-./scripts/generate-traffic.sh
-```
-
-This sends a mix of valid orders, invalid SKUs, and out-of-stock requests against `order-service` so you have both success and error traffic to see in your logs and metrics right away.
-
----
-
-## Deploying to AWS
-
-This starter code is a plain Node.js/Express app, run with pm2 — deploy it to an **EC2** instance per the main project spec:
-
-1. Launch an EC2 instance (Amazon Linux), install Node.js 18+ and `npm install -g pm2`.
-2. Clone this repo onto the instance (or `scp` it over).
-3. Follow the same setup as Option B above (`npm install` in each service dir, `pm2 start ecosystem.config.js`, `pm2 save && pm2 startup`).
-4. Open the security group for ports 3000 and 3001 (or whatever ports you configure) so you can reach the services.
-
-A few notes:
-
-- Each service needs its own deployment target — either two separate EC2 instances, or both running on the same instance under different ports (fine for this project; just update `INVENTORY_SERVICE_URL` accordingly if you split them across two instances, using the private IP of the inventory-service instance).
-- Both services expose `GET /health` — use it for a load balancer / target group health check if you set one up.
-- Nothing in this repo talks to CloudWatch yet. That's the instrumentation work you'll add per the CloudWatch Agent / SDK setup described in the main project docs.
-
----
-
-## Where to Add Your Instrumentation Work
-
-Both `server.js` files have `// TODO:` comments marking exactly where to add:
-
-1. Correlation ID middleware (generate/read `X-Correlation-Id`, attach to `req`, pass it downstream on the inventory call)
-2. Structured JSON logging (replace the placeholder `console.log` calls)
-3. Custom metrics (order count, order value, error rate, latency, stock levels, etc. — see `INSTRUMENTATION.md` guidance in the main spec)
-
-Start with correlation IDs first — the Team Addendum calls this out as the foundation everything else depends on.
+No database (in-memory state, resets on restart — intentional, see [order-service/README.md](order-service/README.md)), no Docker/ECS, no load balancer, no auto-scaling, no Lambda auto-remediation. The project brief explicitly favors "simple application + strong observability" over infrastructure complexity.
